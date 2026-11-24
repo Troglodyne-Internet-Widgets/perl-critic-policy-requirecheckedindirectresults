@@ -7,7 +7,7 @@ use warnings FATAL => 'all';
 use 5.014;
 use re '/aa';
 use Readonly;
-use List::Util                 qw{any first};
+use List::Util                 qw{first};
 use Perl::Critic::Distribution ();
 use Perl::Critic::Utils        qw{ :severities };
 
@@ -158,6 +158,7 @@ out, because no other file can call it.
 
 sub initialize_if_enabled {
     my ( $self, $config ) = @_;
+    no autovivification;
 
     my @functions = map { $_ eq ':builtins' ? @BUILTIN_FUNCTIONS : $_ } keys %{ $self->{_functions} };
     my %counted   = map { ( $_ => 1 ) } @functions, 'eval';
@@ -169,7 +170,12 @@ sub initialize_if_enabled {
         version => join( q{/}, $DATA_FORMAT, Perl::Critic::Distribution->stamp(__FILE__) // q{} ),
         collect => sub {
             my ($ppi) = @_;
-            return { result_subs => { map { ( $_->[1] => $_->[2] ) } grep { !$_->[0]->type } result_subs_in( $ppi, packages_in($ppi) ) } };
+            my %result_subs;
+            foreach my $found ( result_subs_in( $ppi, packages_in($ppi) ) ) {
+                my ( $sub, $full, $builtin ) = @{$found};
+                $result_subs{$full} = $builtin if !$sub->type;
+            }
+            return { result_subs => \%result_subs };
         },
     );
     return $self->SUPER::initialize_if_enabled($config);
@@ -186,7 +192,11 @@ sub violates {
     # the rest of the distribution by their full name, each with the builtin
     # whose result it returns.
     my $packages = packages_in($doc);
-    my %local    = map { ( $_->[0]->name => $_->[2] ) } result_subs_in( $doc, $packages );
+    my %local;
+    foreach my $found ( result_subs_in( $doc, $packages ) ) {
+        my ( $sub, undef, $builtin ) = @{$found};
+        $local{ $sub->name } = $builtin;
+    }
     my %remote;
     my $filename = $doc->filename;
     if ( my $dist = defined $filename && Perl::Critic::Distribution->for_file($filename) ) {
@@ -199,7 +209,10 @@ sub violates {
 
     # The last part of each full name, so that a word that cannot be one is
     # passed over before its package is looked for.
-    my %bare = map { ( $bare_name->($_) => 1 ) } keys %remote;
+    my %bare;
+    foreach my $full_name ( keys %remote ) {
+        $bare{ $bare_name->($full_name) } = 1;
+    }
 
     my @violations;
     foreach my $word ( @{ $doc->find('PPI::Token::Word') || [] } ) {
@@ -233,7 +246,10 @@ none but its C<eval> blocks.
 sub result_subs_in {
     my ( $ppi, $packages ) = @_;
 
-    my $dies = any { $DIES_ITSELF{ $_->module // q{} } } @{ $ppi->find('PPI::Statement::Include') || [] };
+    my $dies;
+    foreach my $include ( @{ $ppi->find('PPI::Statement::Include') || [] } ) {
+        $dies = 1 if $DIES_ITSELF{ $include->module // q{} };
+    }
 
     my @found;
     foreach my $sub ( @{ $ppi->find('PPI::Statement::Sub') || [] } ) {

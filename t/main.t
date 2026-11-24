@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!perl
 use strict;
 use warnings FATAL => 'all';
 
@@ -152,7 +152,11 @@ $check_table->(
 
     my $found = sub {
         my ($file) = @_;
-        return [ map { $_->line_number . q{ } . $_->description } $critic->critique("$root/$file") ];
+        my @reports;
+        foreach my $violation ( $critic->critique("$root/$file") ) {
+            push @reports, $violation->line_number . q{ } . $violation->description;
+        }
+        return \@reports;
     };
 
     is_deeply( $found->('lib/Some/Same.pm'),  ['3 The result of close, returned by a sub, is not checked'], 'another file: a bare call in the package of the sub' );
